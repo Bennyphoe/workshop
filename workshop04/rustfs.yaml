@@ -1,0 +1,133 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustfs-headless
+  namespace: rustfs
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: rustfs
+  ports:
+    - port: 9000
+      targetPort: 9000
+      name: data-port
+    - port: 9001
+      targetPort: 9001
+      name: console-port
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustfs-headful
+  namespace: rustfs
+spec:
+  type: ClusterIP
+  selector:
+    app: rustfs
+  ports:
+    - port: 9000
+      targetPort: 9000
+      name: data-port
+    - port: 9001
+      targetPort: 9001
+      name: console-port
+  
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rustfs-sts
+  namespace: rustfs
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: rustfs
+  serviceName: rustfs-headless
+  podManagementPolicy: Parallel
+  volumeClaimTemplates:
+    - metadata:
+        name: rustfs-vol
+      spec:
+        accessModes: ["ReadWriteOncePod"]
+        storageClassName: standard
+        resources:
+          requests:
+            storage: 1Gi
+  template:
+    metadata:
+      labels:
+        app: rustfs
+    spec:
+      securityContext:
+        fsGroup: 10001
+      containers:
+        - name: rustfs-container
+          image: rustfs/rustfs:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: rustfs-secret
+            - configMapRef:
+                name: rustfs-cm
+          ports:
+            - name: rustfs-api-port
+              containerPort: 9000
+            - name: rustfs-ui-port
+              containerPort: 9001
+          resources:
+            requests:
+              memory: "250Mi"
+              cpu: "200m"
+            limits:
+              memory: "250Mi"
+              cpu: "200m"
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute 
+metadata:
+  name: rustfs-api-route 
+  namespace: rustfs
+spec:
+  parentRefs:
+  - name: rustfs-gtw 
+    namespace: default
+    port: 80
+  hostnames:
+    - s3.rustfs.local
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix 
+        value: /
+    backendRefs:
+    - name: rustfs-headful
+      namespace: rustfs
+      port: 9000
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute 
+metadata:
+  name: rustfs-console-route
+  namespace: rustfs
+spec:
+  parentRefs:
+  - name: rustfs-gtw 
+    namespace: default
+    port: 80
+  hostnames:
+    - console.rustfs.local
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix 
+        value: /
+    backendRefs:
+    - name: rustfs-headful
+      namespace: rustfs
+      port: 9000
+
